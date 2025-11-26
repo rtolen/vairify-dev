@@ -1,0 +1,28 @@
+project_id = "jgwmxzgeropjxwonnruz"
+
+[functions.expire-available-now]
+verify_jwt = false
+
+[functions.activate-scheduled-availability]
+verify_jwt = false
+
+[functions.publish-reviews]
+verify_jwt = false
+
+[functions.check-vai-deadlines]
+verify_jwt = false
+
+[functions.send-verification-otp]
+verify_jwt = false
+
+[functions.verify-otp]
+verify_jwt = false
+
+[functions.send-emergency-sms]
+verify_jwt = false
+
+[functions.send-emergency-alert]
+verify_jwt = false
+
+[functions.check-expired-sessions]
+verify_jwt = false
