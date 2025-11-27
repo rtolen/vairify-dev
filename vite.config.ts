@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => ({
     include: ["face-api.js"],
   },
   build: {
+    outDir: "build",
     commonjsOptions: {
       include: [/face-api\.js/, /node_modules/],
     },
