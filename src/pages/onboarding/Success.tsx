@@ -1,15 +1,59 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { CheckCircle, Shield, Repeat, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import vairifyLogo from "@/assets/vairify-logo.png";
 import { getChainPassUrl, getVairifyUrl } from "@/lib/environment";
+import { useToast } from "@/hooks/use-toast";
 
 const Success = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const { toast } = useToast();
   const [hasCoupon, setHasCoupon] = useState(false);
   const [userData, setUserData] = useState<any>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+
+  const sessionIdFromUrl = useMemo(() => searchParams.get("session_id"), [searchParams]);
+  const chainPassBaseUrl = useMemo(() => (
+    import.meta.env.VITE_CHAINPASS_URL ||
+    import.meta.env.VIITE_CHAINPASS_URL ||
+    getChainPassUrl()
+  ), []);
+  const getSignupSessionId = useCallback(() => {
+    const storedSessionId = sessionStorage.getItem('signup_session_id');
+    return storedSessionId || sessionIdFromUrl;
+  }, [sessionIdFromUrl]);
+  const currentPathWithSearch = useMemo(
+    () => `${location.pathname}${location.search || ""}`,
+    [location.pathname, location.search]
+  );
+  const buildChainPassUrl = useCallback((userId?: string | null) => {
+    const params = new URLSearchParams();
+    const sessionId = getSignupSessionId();
+    const vairifyBaseUrl = getVairifyUrl();
+
+    if (userId) {
+      params.append('user_id', userId);
+    }
+
+    params.append('return_url', `${vairifyBaseUrl}/onboarding/vai-callback`);
+
+    if (sessionId) {
+      params.append('session_id', sessionId);
+    }
+
+    if (hasCoupon && userData?.referralVAI) {
+      params.append('coupon', userData.referralVAI);
+    }
+
+    const paramString = params.toString();
+    return `${chainPassBaseUrl}/?${paramString}`;
+  }, [chainPassBaseUrl, getSignupSessionId, hasCoupon, userData]);
+
+  const displayChainPassUrl = useMemo(() => buildChainPassUrl(authUserId), [buildChainPassUrl, authUserId]);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -25,125 +69,36 @@ const Success = () => {
       const data = JSON.parse(stored);
       setUserData(data);
       setHasCoupon(!!data.referralVAI);
+
+      if (sessionIdFromUrl && !sessionStorage.getItem('signup_session_id')) {
+        sessionStorage.setItem('signup_session_id', sessionIdFromUrl);
+      }
       
       // Check if user is authenticated
       const { data: { user } } = await supabase.auth.getUser();
+      setAuthUserId(user?.id ?? null);
       console.log('✅ Success page loaded. User authenticated:', !!user, 'User ID:', user?.id);
     };
     
     checkAuth();
-  }, [navigate]);
+  }, [navigate, sessionIdFromUrl]);
 
-  const handleGetVAI = async () => {
-    console.log('🚀 Get VAI button clicked');
-    
-    // First, try to get the current session
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    console.log('🔐 Session check:', session?.user?.id, 'Session error:', sessionError);
-    
-    let user = session?.user;
-    
-    // If no session, try to get user directly
-    if (!user) {
-      const { data: { user: userData }, error: authError } = await supabase.auth.getUser();
-      console.log('👤 User data:', userData?.id, 'Auth error:', authError);
-      user = userData;
-    }
-    
-    // If still no user, try to sign in using stored credentials
-    if (!user) {
-      console.log('🔄 Attempting to sign in with stored credentials...');
-      const sessionId = sessionStorage.getItem('signup_session_id');
-      
-      if (sessionId) {
-        try {
-          // Get password from signup session
-          const { data: sessionData } = await supabase
-            .from('signup_sessions')
-            .select('password_hash, email')
-            .eq('session_id', sessionId)
-            .single();
-          
-          if (sessionData?.password_hash && sessionData?.email) {
-            const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-              email: sessionData.email,
-              password: sessionData.password_hash
-            });
-            
-            if (signInError) {
-              console.error('❌ Sign in error:', signInError);
-            } else if (signInData?.user) {
-              console.log('✅ Successfully signed in:', signInData.user.id);
-              user = signInData.user;
-            }
-          }
-        } catch (error) {
-          console.error('❌ Error retrieving session data:', error);
-        }
-      }
-      
-      // Also try with userData from state if available
-      if (!user && userData?.email && userData?.password) {
-        try {
-          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-            email: userData.email,
-            password: userData.password
-          });
-          
-          if (signInError) {
-            console.error('❌ Sign in error with userData:', signInError);
-          } else if (signInData?.user) {
-            console.log('✅ Successfully signed in with userData:', signInData.user.id);
-            user = signInData.user;
-          }
-        } catch (error) {
-          console.error('❌ Error signing in with userData:', error);
-        }
-      }
-    }
-    
-    if (!user) {
-      console.error('❌ No authenticated user found after all attempts');
-      alert('You must be logged in to get a V.A.I. Please try logging in again or refresh the page.');
-      return;
-    }
-    
-    // Direct redirect to ChainPass devtest environment
-    const chainPassBaseUrl = 'https://devtest.chainpass.id';
-    const vairifyBaseUrl = getVairifyUrl();
-    
-    console.log('🌐 ChainPass URL:', chainPassBaseUrl);
-    console.log('🏠 Vairify URL:', vairifyBaseUrl);
-    
-    // Get signup session ID if it exists
-    const sessionId = sessionStorage.getItem('signup_session_id');
-    
-    // Redirect to ChainPass ID for KYC verification
-    // Pass user_id, return_url, session_id, and optional coupon for the verification flow
-    const params = new URLSearchParams();
-    params.append('user_id', user.id);
-    params.append('return_url', `${vairifyBaseUrl}/onboarding/vai-callback`);
-    
-    // Pass session_id so we can retrieve signup data on return
-    if (sessionId) {
-      params.append('session_id', sessionId);
-      console.log('📋 Passing session_id to ChainPass:', sessionId);
-    }
-    
-    if (hasCoupon && userData?.referralVAI) {
-      console.log('🎟️ Adding coupon:', userData.referralVAI);
-      params.append('coupon', userData.referralVAI);
-    }
-    
-    const redirectUrl = `${chainPassBaseUrl}/?${params.toString()}`;
-    
-    console.log('🔗 Full redirect URL:', redirectUrl);
-    console.log('⏩ Redirecting now...');
-    
-    // Use window.location.assign instead of href for better compatibility
-    window.location.assign(redirectUrl);
+  const redirectToLogin = () => {
+    toast({
+      title: "Please sign in again",
+      description: "Log back in to continue your V.A.I. verification."
+    });
+    navigate(`/login?redirect=${encodeURIComponent(currentPathWithSearch)}`);
   };
 
+  const handleGetVAI = () => {
+    if (!displayChainPassUrl) {
+      console.warn('No ChainPass URL available for redirect.');
+      return;
+    }
+
+    window.location.assign(displayChainPassUrl);
+  };
 
   return (
     <div className="min-h-screen bg-gradient-hero flex flex-col items-center justify-center p-4 md:p-6 relative overflow-hidden">
@@ -284,6 +239,11 @@ const Success = () => {
           <p className="text-sm text-white/60 text-center max-w-[480px] mx-auto leading-relaxed mt-4">
             Note: DateGuard, VAI-CHECK, and TruRevu will be locked until you complete V.A.I. verification.
           </p>
+        </div>
+
+        <div className="mt-8 text-center text-white/70 text-sm animate-fade-in" style={{ animationDelay: '0.9s' }}>
+          <p>ChainPass Verification Portal URL</p>
+          <p className="font-mono text-base text-white mt-1">{displayChainPassUrl}</p>
         </div>
       </div>
     </div>

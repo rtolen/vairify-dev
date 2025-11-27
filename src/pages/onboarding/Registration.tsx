@@ -154,6 +154,49 @@ const Registration = () => {
       // Import supabase client
       const { supabase } = await import("@/integrations/supabase/client");
       
+      // Check if user already exists
+      const { data: existingProfile, error: existingError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', formData.email.toLowerCase())
+        .maybeSingle();
+
+      if (existingError) {
+        console.error('Error checking existing user:', existingError);
+        throw new Error('Unable to verify user status. Please try again.');
+      }
+
+      if (existingProfile) {
+        toast.error("A user already exists with this email");
+        const encodedEmail = encodeURIComponent(formData.email);
+        const encodedPassword = encodeURIComponent(formData.password);
+        navigate(`/login?error=email_exists&email=${encodedEmail}&password=${encodedPassword}`);
+        return;
+      }
+
+      const { error: signUpError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/onboarding/success`
+        }
+      });
+
+      if (signUpError) {
+        const message = signUpError.message?.toLowerCase() || '';
+        if (message.includes('already registered') || message.includes('already exists')) {
+          toast.error("A user already exists with this email");
+          const encodedEmail = encodeURIComponent(formData.email);
+          const encodedPassword = encodeURIComponent(formData.password);
+          navigate(`/login?error=email_exists&email=${encodedEmail}&password=${encodedPassword}`);
+          return;
+        }
+        console.error('Sign up error:', signUpError);
+        throw new Error(signUpError.message || 'Failed to create account. Please try again.');
+      } else {
+        await supabase.auth.signOut();
+      }
+
       // Create signup session in database
       const { data: sessionData, error: sessionError } = await supabase
         .from('signup_sessions')

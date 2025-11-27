@@ -135,6 +135,14 @@ const VerifyOTP = () => {
 
           if (signUpError) {
             console.error('Sign up error:', signUpError);
+            const alreadyRegistered =
+              signUpError.message?.toLowerCase().includes('already registered') ||
+              signUpError.message?.toLowerCase().includes('already exists');
+            if (alreadyRegistered) {
+              toast.error('That email already has an account. Please sign in.');
+              navigate(`/login?error=email_exists&email=${encodeURIComponent(email || '')}`);
+              return;
+            }
             throw new Error(signUpError.message || 'Failed to create account. Please try again.');
           }
 

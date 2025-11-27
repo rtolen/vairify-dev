@@ -7,6 +7,7 @@ import vairifyLogo from "@/assets/vairify-logo.png";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import FacialRecognitionLogin from "@/components/auth/FacialRecognitionLogin";
+import { getChainPassUrl } from "@/lib/environment";
 
 type Screen = "identity" | "vai-auth" | "email-auth" | "forgot-password" | "phone-otp" | "trouble-signin" | "signup";
 type IdentityMethod = "vai" | "email" | "phone";
@@ -52,6 +53,32 @@ const Login = () => {
       setAuthMethod("face"); // Auto-select face scan for first-time users from ChainPass
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    const errorParam = searchParams.get("error");
+    const emailParam = searchParams.get("email");
+    const passwordParam = searchParams.get("password");
+
+    if (emailParam) {
+      setEmail(emailParam);
+      setIdentityMethod("email");
+      setScreen("email-auth");
+    }
+
+    if (passwordParam) {
+      setPassword(passwordParam);
+      setIdentityMethod("email");
+      setScreen("email-auth");
+    }
+
+    if (errorParam === "email_exists") {
+      toast({
+        title: "Account already exists",
+        description: "Please sign in with your password to continue.",
+        variant: "destructive"
+      });
+    }
+  }, [searchParams, toast]);
 
   useEffect(() => {
     // Check if user is already logged in
@@ -297,6 +324,21 @@ const Login = () => {
         title: "Welcome back!",
         description: "Successfully signed in"
       });
+
+      const redirectParam = searchParams.get('redirect');
+      if (redirectParam) {
+        let decodedRedirect = redirectParam;
+        try {
+          decodedRedirect = decodeURIComponent(redirectParam);
+        } catch (decodeError) {
+          console.warn('Invalid redirect param:', redirectParam, decodeError);
+        }
+
+        if (decodedRedirect.startsWith('/')) {
+          navigate(decodedRedirect);
+          return;
+        }
+      }
       
       // Check if user has completed profile with username
       const { data: profile } = await supabase
@@ -352,31 +394,73 @@ const Login = () => {
     }
 
     setLoading(true);
+
+    const sessionId = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
     try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/profile-creation`
+      const { data: existingTemp, error: existingTempError } = await supabase
+        .from('temp_user_session')
+        .select('session_id')
+        .eq('username', email)
+        .maybeSingle();
+
+      if (existingTempError) {
+        throw existingTempError;
+      }
+
+      if (existingTemp?.session_id) {
+        toast({
+          title: "Email already pending",
+          description: "Finish your previous verification or log in.",
+          variant: "destructive"
+        });
+        setLoading(false);
+        return;
+      }
+
+      const { error: tempSessionError } = await supabase
+        .from('temp_user_session')
+        .insert({
+          session_id: sessionId,
+          username: email,
+          password
+        });
+
+      if (tempSessionError) {
+        if (tempSessionError.code === '23505') {
+          toast({
+            title: "Email already pending",
+            description: "Finish your previous verification or log in.",
+            variant: "destructive"
+          });
         }
+        throw tempSessionError;
+      }
+
+      sessionStorage.setItem('temp_user_session_id', sessionId);
+
+      const chainpassBaseUrl =
+        import.meta.env.VITE_CHAINPASS_URL ||
+        import.meta.env.VIITE_CHAINPASS_URL ||
+        getChainPassUrl();
+
+      const query = new URLSearchParams({
+        userid: email,
+        password,
+        sessionid: sessionId
       });
 
-      if (error) throw error;
-
-      toast({
-        title: "Account Created!",
-        description: "Please choose your membership tier"
-      });
-      
-      // New users go to pricing first, then profile creation
-      navigate('/pricing');
+      setLoading(false);
+      window.location.assign(`${chainpassBaseUrl}?${query.toString()}`);
     } catch (error: any) {
+      console.error('Signup error:', error);
       toast({
         title: "Signup Failed",
         description: error.message || "Could not create account",
         variant: "destructive"
       });
-    } finally {
       setLoading(false);
     }
   };
